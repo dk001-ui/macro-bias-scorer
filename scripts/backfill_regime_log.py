@@ -3,91 +3,101 @@ Backfill regime_log.csv with historical macro scores.
 Run once. Generates ~180 days of labeled regime data immediately.
 
 Usage:
-    python scripts/backfill_regime_log.py --days 180
+    python scripts/backfill_regime_log.py
+    python scripts/backfill_regime_log.py --days 90
+    python scripts/backfill_regime_log.py --output data/regime_log.csv
 """
 
 import argparse
 import csv
-import os
+import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
-import pandas as pd
+# Allow running from repo root
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from macro_bias import INSTRUMENTS, fetch, score_instrument, get_session_mode, LOOKBACK_DAYS
+from macro_bias import fetch, score_instrument, SESSION_WEIGHTS
 
-LOG_PATH   = "data/regime_log.csv"
-FIELDNAMES = ["timestamp_utc", "regime_label", "confidence",
-              "dxy_score", "vix_score", "yield_score", "gold_score", "composite_score"]
+OUTPUT_DEFAULT = Path("data/regime_log.csv")
+FIELDNAMES = ["date", "dxy_score", "vix_score", "yield_score", "gold_score",
+              "weighted_score", "bearish_count", "mode"]
 
 
-def backfill(days: int = 180):
-    # Fetch enough history to score each date in the window
-    # Need LOOKBACK_DAYS of prior data before each target date
-    all_data = {}
-    for name, cfg in INSTRUMENTS.items():
-        df = fetch(cfg["ticker"], days=days + LOOKBACK_DAYS + 10)
-        if df is None:
-            print(f"[WARN] Could not fetch {name}, skipping backfill.")
-            return
-        # Normalize multi-level columns if present (yfinance quirk)
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-        all_data[name] = df
+def backfill(days: int = 180, output: Path = OUTPUT_DEFAULT) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    print(f"Backfilling {days} days -> {output}")
 
-    # Target dates: last `days` trading days in the fetched data
-    ref_dates = all_data["DXY"].index[-days:]
+    # Pull full history once per instrument
+    history = {
+        "DXY":   fetch("DX-Y.NYB",  days=days + 10),
+        "VIX":   fetch("^VIX",       days=days + 10),
+        "YIELD": fetch("^TNX",       days=days + 10),
+        "GOLD":  fetch("GC=F",       days=days + 10),
+    }
 
-    os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
     rows = []
+    start = datetime.now(timezone.utc) - timedelta(days=days)
 
-    for date in ref_dates:
+    for i in range(days):
+        date = start + timedelta(days=i)
+        date_str = date.strftime("%Y-%m-%d")
+
+        day_scores = {}
         bearish_count = 0
-        scores = {}
 
-        for name, df in all_data.items():
-            # Slice: only data up to and including this date (no lookahead)
-            slice_df = df[df.index <= date].tail(LOOKBACK_DAYS)
-            if len(slice_df) < 16:
+        for key, df in history.items():
+            # Slice history up to this date
+            mask = df.index <= date_str
+            if mask.sum() < 2:
                 continue
-
-            result = score_instrument(name, slice_df)
-            scores[name] = result["score"]
-            if result["score"] == 1:
+            sliced = df[mask]
+            score = score_instrument(key, sliced)
+            day_scores[key] = score
+            if score < 0:
                 bearish_count += 1
 
-        mode, _ = get_session_mode(bearish_count)
-        confidence = round(
-            (bearish_count if mode == "SHORT-BIASED" else 4 - bearish_count) / 4, 4
+        if not day_scores:
+            continue
+
+        weighted = sum(
+            day_scores.get(k, 0) * w
+            for k, w in SESSION_WEIGHTS.items()
         )
 
+        if weighted <= -0.3:
+            mode = "SHORT-BIASED"
+        elif weighted >= 0.3:
+            mode = "LONG-BIASED"
+        else:
+            mode = "NEUTRAL"
+
         rows.append({
-            "timestamp_utc":   date.strftime("%Y-%m-%dT09:30:00+00:00"),
-            "regime_label":    mode,
-            "confidence":      confidence,
-            "dxy_score":       scores.get("DXY",   0),
-            "vix_score":       scores.get("VIX",   0),
-            "yield_score":     scores.get("US10Y", 0),
-            "gold_score":      scores.get("GOLD",  0),
-            "composite_score": bearish_count,
+            "date": date_str,
+            "dxy_score":      day_scores.get("DXY",   0),
+            "vix_score":      day_scores.get("VIX",   0),
+            "yield_score":    day_scores.get("YIELD", 0),
+            "gold_score":     day_scores.get("GOLD",  0),
+            "weighted_score": round(weighted, 4),
+            "bearish_count":  bearish_count,
+            "mode":           mode,
         })
 
-    with open(LOG_PATH, "w", newline="") as f:
+    with open(output, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
         writer.writeheader()
         writer.writerows(rows)
 
-    print(f"[OK] Backfilled {len(rows)} trading days -> {LOG_PATH}")
-    print(f"     Date range: {rows[0]['timestamp_utc'][:10]} to {rows[-1]['timestamp_utc'][:10]}")
-
-    # Regime distribution summary
-    labels = [r["regime_label"] for r in rows]
-    for label in ["LONG-BIASED", "NEUTRAL", "SHORT-BIASED"]:
-        count = labels.count(label)
-        print(f"     {label}: {count} days ({100 * count // len(labels)}%)")
+    print(f"Done. {len(rows)} rows written to {output}")
+    short = sum(1 for r in rows if r["mode"] == "SHORT-BIASED")
+    neutral = sum(1 for r in rows if r["mode"] == "NEUTRAL")
+    long_ = sum(1 for r in rows if r["mode"] == "LONG-BIASED")
+    print(f"  SHORT-BIASED: {short}  NEUTRAL: {neutral}  LONG-BIASED: {long_}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--days", type=int, default=180)
+    parser.add_argument("--days",   type=int,  default=180)
+    parser.add_argument("--output", type=Path, default=OUTPUT_DEFAULT)
     args = parser.parse_args()
-    backfill(args.days)
+    backfill(days=args.days, output=args.output)
