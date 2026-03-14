@@ -153,7 +153,7 @@ def scalp_guidance(mode, bearish_count):
 
 def run():
     now = datetime.now()
-    print(f"\nMacro Session Bias Scorer  |  {now.strftime('%A %d %b %Y  %H:%M')}\n")
+    print(f"\nMacro Session Bias Scorer | {now.strftime('%A %d %b %Y %H:%M')}\n")
 
     results = []
     for name in INSTRUMENTS:
@@ -168,18 +168,18 @@ def run():
         sys.exit(1)
 
     bearish_count = sum(1 for r in results if r["score"] == 1)
-    mode, color   = get_session_mode(bearish_count)
-    guidance      = scalp_guidance(mode, bearish_count)
+    mode, color = get_session_mode(bearish_count)
+    guidance = scalp_guidance(mode, bearish_count)
 
     if HAS_RICH:
         t = Table(title="Macro Instrument Scores", box=box.SIMPLE_HEAVY, show_lines=True)
         t.add_column("Instrument", style="bold white", min_width=22)
-        t.add_column("Last",       justify="right",    min_width=10)
-        t.add_column("1D Chg",     justify="right",    min_width=9)
-        t.add_column("5D Chg",     justify="right",    min_width=9)
-        t.add_column("RSI",        justify="right",    min_width=6)
-        t.add_column("Signal",     justify="center",   min_width=10)
-        t.add_column("Reason",     style="dim",        min_width=40)
+        t.add_column("Last", justify="right", min_width=10)
+        t.add_column("1D Chg", justify="right", min_width=9)
+        t.add_column("5D Chg", justify="right", min_width=9)
+        t.add_column("RSI", justify="right", min_width=6)
+        t.add_column("Signal", justify="center", min_width=10)
+        t.add_column("Reason", style="dim", min_width=40)
 
         sig_colors = {"BEARISH": "red", "NEUTRAL": "yellow", "BULLISH": "green"}
 
@@ -199,8 +199,8 @@ def run():
 
         console.print(t)
 
-        summary    = f"[bold {color}]{mode}[/]  |  [white]{bearish_count}/4 instruments bearish[/]"
-        guide_text = "\n".join(f"  [dim]-[/] {g}" for g in guidance)
+        summary = f"[bold {color}]{mode}[/] | [white]{bearish_count}/4 instruments bearish[/]"
+        guide_text = "\n".join(f" [dim]-[/] {g}" for g in guidance)
         console.print(Panel(
             f"{summary}\n\n{guide_text}",
             title="[bold]Session Bias[/]",
@@ -209,19 +209,53 @@ def run():
         ))
 
     else:
-        header = f"{'Instrument':<25} {'Last':>10} {'1D%':>7} {'5D%':>7} {'RSI':>6}  {'Signal':<10}  Reason"
+        header = f"{'Instrument':<25} {'Last':>10} {'1D%':>7} {'5D%':>7} {'RSI':>6} {'Signal':<10} Reason"
         print(header)
         print("-" * len(header))
         for r in results:
             print(
                 f"{r['label']:<25} {r['last']:>10.3f} "
                 f"{r['chg_1d']:>+7.2f} {r['chg_5d']:>+7.2f} "
-                f"{r['rsi']:>6.0f}  {r['signal']:<10}  {r['reason']}"
+                f"{r['rsi']:>6.0f} {r['signal']:<10} {r['reason']}"
             )
-        print(f"\nSESSION MODE: {mode}  ({bearish_count}/4 bearish)\n")
+        print(f"\nSESSION MODE: {mode} ({bearish_count}/4 bearish)\n")
         for g in guidance:
             print(f"  - {g}")
         print()
+
+
+# ---------------------------------------------------------------------------
+# Regime logging
+# ---------------------------------------------------------------------------
+import csv as _csv
+from pathlib import Path as _Path
+
+_LOG_PATH = _Path("data/regime_log.csv")
+_LOG_FIELDS = ["date", "dxy_score", "vix_score", "yield_score", "gold_score",
+               "weighted_score", "bearish_count", "mode"]
+
+
+def log_regime(scores: dict, weighted: float, bearish_count: int, mode: str,
+               log_path: _Path = _LOG_PATH) -> None:
+    """Append today's regime row to regime_log.csv (creates file if missing)."""
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not log_path.exists()
+    today = __import__("datetime").date.today().isoformat()
+    row = {
+        "date":           today,
+        "dxy_score":      scores.get("DXY",   0),
+        "vix_score":      scores.get("VIX",   0),
+        "yield_score":    scores.get("YIELD", 0),
+        "gold_score":     scores.get("GOLD",  0),
+        "weighted_score": round(weighted, 4),
+        "bearish_count":  bearish_count,
+        "mode":           mode,
+    }
+    with open(log_path, "a", newline="") as f:
+        writer = _csv.DictWriter(f, fieldnames=_LOG_FIELDS)
+        if write_header:
+            writer.writeheader()
+        writer.writerow(row)
 
 
 if __name__ == "__main__":
