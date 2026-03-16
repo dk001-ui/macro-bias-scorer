@@ -30,10 +30,10 @@ def backfill(days: int = 180, output: Path = OUTPUT_DEFAULT) -> None:
 
     # Pull full history once per instrument
     history = {
-        "DXY":   fetch("DX-Y.NYB",  days=days + 10),
-        "VIX":   fetch("^VIX",       days=days + 10),
-        "YIELD": fetch("^TNX",       days=days + 10),
-        "GOLD":  fetch("GC=F",       days=days + 10),
+        "DXY":   fetch("DX-Y.NYB", days=days + 10),
+        "VIX":   fetch("^VIX",     days=days + 10),
+        "US10Y": fetch("^TNX",     days=days + 10),
+        "GOLD":  fetch("GC=F",     days=days + 10),
     }
 
     rows = []
@@ -73,10 +73,10 @@ def backfill(days: int = 180, output: Path = OUTPUT_DEFAULT) -> None:
             mode = "NEUTRAL"
 
         rows.append({
-            "date": date_str,
+            "date":           date_str,
             "dxy_score":      day_scores.get("DXY",   0),
             "vix_score":      day_scores.get("VIX",   0),
-            "yield_score":    day_scores.get("YIELD", 0),
+            "yield_score":    day_scores.get("US10Y", 0),
             "gold_score":     day_scores.get("GOLD",  0),
             "weighted_score": round(weighted, 4),
             "bearish_count":  bearish_count,
@@ -89,9 +89,9 @@ def backfill(days: int = 180, output: Path = OUTPUT_DEFAULT) -> None:
         writer.writerows(rows)
 
     print(f"Done. {len(rows)} rows written to {output}")
-    short = sum(1 for r in rows if r["mode"] == "SHORT-BIASED")
+    short   = sum(1 for r in rows if r["mode"] == "SHORT-BIASED")
     neutral = sum(1 for r in rows if r["mode"] == "NEUTRAL")
-    long_ = sum(1 for r in rows if r["mode"] == "LONG-BIASED")
+    long_   = sum(1 for r in rows if r["mode"] == "LONG-BIASED")
     print(f"  SHORT-BIASED: {short}  NEUTRAL: {neutral}  LONG-BIASED: {long_}")
 
 
