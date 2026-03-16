@@ -38,14 +38,21 @@ console = Console() if HAS_RICH else None
 INSTRUMENTS = {
     "DXY":   {"ticker": "DX-Y.NYB", "label": "DXY (Dollar Index)", "bearish_when": "rising"},
     "VIX":   {"ticker": "^VIX",     "label": "VIX (Fear Index)",   "bearish_when": "rising"},
-    "US10Y": {"ticker": "^TNX",     "label": "US 10Y Yield",       "bearish_when": "rising"},
-    "GOLD":  {"ticker": "GC=F",     "label": "Gold",               "bearish_when": "falling"},
+    "US10Y": {"ticker": "^TNX",     "label": "US 10Y Yield",        "bearish_when": "rising"},
+    "GOLD":  {"ticker": "GC=F",     "label": "Gold",                "bearish_when": "falling"},
 }
 
 LOOKBACK_DAYS = 30
 RSI_PERIOD    = 14
 MA_FAST       = 10
 MA_SLOW       = 20
+
+SESSION_WEIGHTS = {
+    "DXY":   0.25,
+    "VIX":   0.25,
+    "US10Y": 0.25,
+    "GOLD":  0.25,
+}
 
 
 def fetch(ticker, days=LOOKBACK_DAYS):
@@ -128,26 +135,26 @@ def get_session_mode(bearish_count):
 
 def scalp_guidance(mode, bearish_count):
     if mode == "LONG-BIASED":
-        return [
-            "Take long scalps freely on aligned indicator signals.",
-            "Short scalps need extra confirmation -- require 4/5 confluence.",
-            "Hold winners slightly longer on long side.",
-            "Cut losing longs at first sign of failure -- no macro support below.",
+        return [\
+            "Take long scalps freely on aligned indicator signals.",\
+            "Short scalps need extra confirmation -- require 4/5 confluence.",\
+            "Hold winners slightly longer on long side.",\
+            "Cut losing longs at first sign of failure -- no macro support below.",\
         ]
     elif mode == "NEUTRAL":
-        return [
-            "Trade both sides but reduce position size by 30-50%.",
-            "Respect the intraday range -- fade extremes rather than breakouts.",
-            "Tighten stops on both sides -- directional conviction is low.",
-            "BTC structure check is critical today before any alt scalps.",
+        return [\
+            "Trade both sides but reduce position size by 30-50%.",\
+            "Respect the intraday range -- fade extremes rather than breakouts.",\
+            "Tighten stops on both sides -- directional conviction is low.",\
+            "BTC structure check is critical today before any alt scalps.",\
         ]
     else:
-        return [
-            "Take short scalps freely on aligned indicator signals.",
-            "Do NOT chase longs -- macro environment is risk-off.",
-            "Hold shorts slightly longer than usual -- downside moves are asymmetric.",
-            "Cut long scalps faster than normal (25-50% of usual hold time).",
-            f"Macro score {bearish_count}/4 bearish -- highest conviction short day.",
+        return [\
+            "Take short scalps freely on aligned indicator signals.",\
+            "Do NOT chase longs -- macro environment is risk-off.",\
+            "Hold shorts slightly longer than usual -- downside moves are asymmetric.",\
+            "Cut long scalps faster than normal (25-50% of usual hold time).",\
+            f"Macro score {bearish_count}/4 bearish -- highest conviction short day.",\
         ]
 
 
@@ -170,6 +177,11 @@ def run():
     bearish_count = sum(1 for r in results if r["score"] == 1)
     mode, color = get_session_mode(bearish_count)
     guidance = scalp_guidance(mode, bearish_count)
+
+    # Log regime to CSV
+    scores = {r["name"]: r["score"] for r in results}
+    weighted = sum(scores.get(k, 0) for k in ["DXY", "VIX", "US10Y", "GOLD"]) / 4
+    log_regime(scores=scores, weighted=weighted, bearish_count=bearish_count, mode=mode)
 
     if HAS_RICH:
         t = Table(title="Macro Instrument Scores", box=box.SIMPLE_HEAVY, show_lines=True)
@@ -230,10 +242,10 @@ def run():
 import csv as _csv
 from pathlib import Path as _Path
 
-_LOG_PATH = _Path("data/regime_log.csv")
-_LOG_FIELDS = ["date", "dxy_score", "vix_score", "yield_score", "gold_score",
-               "weighted_score", "bearish_count", "mode"]
 
+_LOG_PATH   = _Path("data/regime_log.csv")
+_LOG_FIELDS = ["date", "dxy_score", "vix_score", "yield_score", "gold_score",\
+               "weighted_score", "bearish_count", "mode"]
 
 def log_regime(scores: dict, weighted: float, bearish_count: int, mode: str,
                log_path: _Path = _LOG_PATH) -> None:
@@ -243,10 +255,10 @@ def log_regime(scores: dict, weighted: float, bearish_count: int, mode: str,
     today = __import__("datetime").date.today().isoformat()
     row = {
         "date":           today,
-        "dxy_score":      scores.get("DXY",   0),
-        "vix_score":      scores.get("VIX",   0),
-        "yield_score":    scores.get("YIELD", 0),
-        "gold_score":     scores.get("GOLD",  0),
+        "dxy_score":      scores.get("DXY", 0),
+        "vix_score":      scores.get("VIX", 0),
+        "yield_score":    scores.get("US10Y", 0),
+        "gold_score":     scores.get("GOLD", 0),
         "weighted_score": round(weighted, 4),
         "bearish_count":  bearish_count,
         "mode":           mode,
