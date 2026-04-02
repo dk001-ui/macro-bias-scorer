@@ -1,0 +1,103 @@
+//@version=5
+// =============================================================================
+// SOL Scalper -- Short Confluence STRATEGY
+// Pine Script v5
+// Signals: MACD + CMF + VWAP + RSI + Volume (5M optimised)
+// SL: 2.0% | TP: 1.5% | Commission: 0.05% per side
+// Parameters validated on 180 days SOL/USDT @ Binance
+// =============================================================================
+strategy(title="SOL Scalper - Short Strategy",
+         shorttitle="SOL-SS",
+         overlay=true,
+         initial_capital=10000,
+         default_qty_type=strategy.percent_of_equity,
+         default_qty_value=100,
+         commission_type=strategy.commission.percent,
+         commission_value=0.05,
+         pyramiding=0,
+         calc_on_every_tick=false,
+         process_orders_on_close=true)
+
+// -- INPUTS -------------------------------------------------------------------
+// MACD
+macd_fast   = input.int(12,  "MACD Fast",   minval=2)
+macd_slow   = input.int(26,  "MACD Slow",   minval=2)
+macd_signal = input.int(9,   "MACD Signal", minval=2)
+
+// CMF
+cmf_len     = input.int(20,  "CMF Length",  minval=5)
+cmf_thresh  = input.float(-0.08, "CMF Threshold", step=0.01)
+
+// RSI
+rsi_len     = input.int(14,  "RSI Length",  minval=2)
+rsi_lo      = input.int(35,  "RSI Lower Bound")
+rsi_hi      = input.int(55,  "RSI Upper Bound")
+
+// Volume
+vol_len     = input.int(20,  "Volume MA Length")
+vol_mult    = input.float(1.2, "Volume Multiplier (soft boost)", step=0.1)
+
+// Score gate
+score_gate  = input.int(3, "Min Score (3-5)", minval=3, maxval=5)
+
+// Risk
+sl_pct      = input.float(2.0, "Stop Loss %",   minval=0.1, step=0.1) / 100
+tp_pct      = input.float(1.5, "Take Profit %", minval=0.1, step=0.1) / 100
+
+// Display
+show_vwap   = input.bool(true, "Show VWAP")
+
+// -- INDICATORS ---------------------------------------------------------------
+
+// MACD
+[macd_line, sig_line, hist] = ta.macd(close, macd_fast, macd_slow, macd_signal)
+c_macd = hist < 0 and hist < hist[1]
+
+// CMF
+mfm   = ((close - low) - (high - close)) / (high - low + 0.0001)
+mfv   = mfm * volume
+cmf   = ta.sma(mfv, cmf_len) / ta.sma(volume, cmf_len)
+c_cmf = cmf < cmf_thresh
+
+// VWAP
+vwap_val = ta.vwap(hlc3)
+c_vwap   = close < vwap_val
+
+// RSI
+rsi_val = ta.rsi(close, rsi_len)
+c_rsi   = rsi_val > rsi_lo and rsi_val < rsi_hi
+
+// Volume boost (soft)
+vol_ma  = ta.sma(volume, vol_len)
+c_vol   = volume > vol_ma * vol_mult
+
+// -- SCORE --------------------------------------------------------------------
+score        = (c_macd ? 1 : 0) + (c_cmf ? 1 : 0) + (c_vwap ? 1 : 0) + (c_rsi ? 1 : 0) + (c_vol ? 1 : 0)
+signal_short = score >= score_gate
+
+// -- EXECUTION ----------------------------------------------------------------
+if signal_short and strategy.position_size == 0
+    strategy.entry("Short", strategy.short)
+
+// Dynamic SL/TP based on entry price
+if strategy.position_size < 0
+    entry_price = strategy.position_avg_price
+    strategy.exit("SL/TP", "Short",
+                  stop  = entry_price * (1 + sl_pct),
+                  limit = entry_price * (1 - tp_pct))
+
+// -- VISUALS ------------------------------------------------------------------
+plot(show_vwap ? vwap_val : na, title="VWAP", color=color.new(color.orange, 0), linewidth=2)
+
+arrow_col = score == 5 ? color.red :
+            score == 4 ? color.new(color.red, 30) :
+            color.new(color.red, 60)
+
+plotshape(signal_short and strategy.position_size == 0,
+          title="Short Signal", style=shape.triangledown,
+          location=location.abovebar, color=arrow_col, size=size.small)
+
+// -- ALERTS -------------------------------------------------------------------
+alertcondition(signal_short and strategy.position_size == 0,
+               title="SOL Scalper - Short Entry",
+               message='{"symbol":"{{ticker}}","action":"SHORT","price":"{{close}}","time":"{{time}}"}')
